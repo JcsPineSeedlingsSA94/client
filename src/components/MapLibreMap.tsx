@@ -9,8 +9,31 @@ import maplibregl from 'maplibre-gl';
 import polyline from '@mapbox/polyline';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
-// OpenFreeMap tile URL (free, no API key required)
-const TILE_URL = 'https://tiles.openfreemap.org/styles/liberty/style.json';
+// OpenStreetMap raster tiles (most stable, no API key required)
+const OSM_RASTER_STYLE = {
+  version: 8 as const,
+  sources: {
+    osm: {
+      type: 'raster' as const,
+      tiles: [
+        'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'
+      ],
+      tileSize: 256,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }
+  },
+  layers: [
+    {
+      id: 'osm',
+      type: 'raster' as const,
+      source: 'osm',
+      minzoom: 0,
+      maxzoom: 19
+    }
+  ]
+};
 
 export interface MapMarker {
   id: string;
@@ -59,15 +82,46 @@ interface MapLibreMapProps {
   storePosition?: { lat: number; lng: number };
 }
 
-// Custom marker elements
+// Custom marker elements with entrance animations
 const createMarkerElement = (type: MapMarker['type'], label?: string): HTMLElement => {
   const el = document.createElement('div');
   el.className = 'maplibre-marker';
   
+  // Add global animation styles
+  const styleId = 'maplibre-marker-animations';
+  if (!document.getElementById(styleId)) {
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.textContent = `
+      @keyframes markerBounceIn {
+        0% { transform: scale(0) translateY(-20px); opacity: 0; }
+        50% { transform: scale(1.2) translateY(0); }
+        70% { transform: scale(0.9); }
+        100% { transform: scale(1); opacity: 1; }
+      }
+      @keyframes markerPulse {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(91, 46, 255, 0.4); }
+        50% { box-shadow: 0 0 0 10px rgba(91, 46, 255, 0); }
+      }
+      @keyframes driverPulse {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+        50% { box-shadow: 0 0 0 12px rgba(16, 185, 129, 0); }
+      }
+      @keyframes storePulse {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4); }
+        50% { box-shadow: 0 0 0 10px rgba(245, 158, 11, 0); }
+      }
+      .marker-animate-in {
+        animation: markerBounceIn 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55) forwards;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+  
   switch (type) {
     case 'pickup':
       el.innerHTML = `
-        <div style="
+        <div class="marker-animate-in" style="
           width: 32px;
           height: 32px;
           background: #5B2EFF;
@@ -77,6 +131,7 @@ const createMarkerElement = (type: MapMarker['type'], label?: string): HTMLEleme
           display: flex;
           align-items: center;
           justify-content: center;
+          animation: markerBounceIn 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55) forwards, markerPulse 2s ease-in-out infinite 0.5s;
         ">
           <div style="width: 8px; height: 8px; background: white; border-radius: 50%;"></div>
         </div>
@@ -85,10 +140,11 @@ const createMarkerElement = (type: MapMarker['type'], label?: string): HTMLEleme
       
     case 'dropoff':
       el.innerHTML = `
-        <div style="
+        <div class="marker-animate-in" style="
           width: 36px;
           height: 44px;
           position: relative;
+          animation: markerBounceIn 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55) forwards;
         ">
           <div style="
             width: 36px;
@@ -116,7 +172,7 @@ const createMarkerElement = (type: MapMarker['type'], label?: string): HTMLEleme
       
     case 'stop':
       el.innerHTML = `
-        <div style="
+        <div class="marker-animate-in" style="
           width: 24px;
           height: 24px;
           background: #5B2EFF;
@@ -129,13 +185,14 @@ const createMarkerElement = (type: MapMarker['type'], label?: string): HTMLEleme
           font-size: 10px;
           font-weight: bold;
           color: white;
+          animation: markerBounceIn 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55) forwards;
         ">${label || ''}</div>
       `;
       break;
       
     case 'driver':
       el.innerHTML = `
-        <div style="
+        <div class="marker-animate-in" style="
           width: 40px;
           height: 40px;
           background: #10B981;
@@ -146,6 +203,7 @@ const createMarkerElement = (type: MapMarker['type'], label?: string): HTMLEleme
           align-items: center;
           justify-content: center;
           transition: transform 0.3s ease;
+          animation: markerBounceIn 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55) forwards, driverPulse 2s ease-in-out infinite 0.5s;
         ">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
             <path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.5 16c-.83 0-1.5-.67-1.5-1.5S5.67 13 6.5 13s1.5.67 1.5 1.5S7.33 16 6.5 16zm11 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM5 11l1.5-4.5h11L19 11H5z"/>
@@ -156,7 +214,7 @@ const createMarkerElement = (type: MapMarker['type'], label?: string): HTMLEleme
       
     case 'store':
       el.innerHTML = `
-        <div style="
+        <div class="marker-animate-in" style="
           width: 32px;
           height: 32px;
           background: #F59E0B;
@@ -166,6 +224,7 @@ const createMarkerElement = (type: MapMarker['type'], label?: string): HTMLEleme
           display: flex;
           align-items: center;
           justify-content: center;
+          animation: markerBounceIn 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55) forwards, storePulse 2s ease-in-out infinite 0.5s;
         ">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
             <path d="M18.36 9l.6 3H5.04l.6-3h12.72M20 4H4v2h16V4zm0 3H4l-1 5v2h1v6h10v-6h4v6h2v-6h1v-2l-1-5zM6 18v-4h6v4H6z"/>
@@ -252,7 +311,7 @@ export const MapLibreMap: React.FC<MapLibreMapProps> = ({
 
     map.current = new maplibregl.Map({
       container: mapContainer.current,
-      style: TILE_URL,
+      style: OSM_RASTER_STYLE,
       center: [center.lng, center.lat],
       zoom: zoom,
       attributionControl: false
