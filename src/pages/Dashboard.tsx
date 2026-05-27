@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Search, Calendar, Clock } from 'lucide-react';
+import { Search, Calendar, Clock, Loader2 } from 'lucide-react';
 import { DraggablePanel } from '../components/DraggablePanel';
 import { ScrollableSection } from '../components/ScrollableSection';
 import { BottomNavigation } from '../components/BottomNavigation';
 import { MapLibreMap } from '../components/MapLibreMap';
-import { getRecentAddresses, GeoapifyAddress } from '../services/geoapifyService';
+import { getRecentAddresses, reverseGeocode, GeoapifyAddress } from '../services/geoapifyService';
 import { useRideContext } from '../contexts/RideContext';
 import { useGeolocation } from '../hooks/useGeolocation';
 
@@ -18,8 +18,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSearchSelect }) => {
   const navigate = useNavigate();
   const [panelHeight, setPanelHeight] = useState(450);
   const { isRideActive, rideStatus } = useRideContext();
-  const { latitude, longitude } = useGeolocation();
+  const { latitude, longitude, loading: locationLoading } = useGeolocation();
   const [recentAddresses, setRecentAddresses] = useState<GeoapifyAddress[]>([]);
+  const [isLoadingRecentAddress, setIsLoadingRecentAddress] = useState(false);
 
   const maxPanelHeight = 600;
   const minPanelHeight = 175;
@@ -54,13 +55,56 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSearchSelect }) => {
     }
   };
 
-  const handleRecentAddressClick = (address: string) => {
+  // Handle recent address click - get current location and navigate to SelectRide
+  const handleRecentAddressClick = useCallback(async (recentAddress: GeoapifyAddress) => {
     if (isRideActive || rideStatus === 'pending') {
       handleNavigationBlock(rideStatus === 'pending' ? '/waiting-for-driver' : '/driver-coming');
-    } else {
-      onSearchSelect(address);
+      return;
     }
-  };
+
+    // Show loading state
+    setIsLoadingRecentAddress(true);
+
+    try {
+      // Get user's current location as pickup
+      if (!latitude || !longitude) {
+        alert('Unable to get your current location. Please enable location services.');
+        setIsLoadingRecentAddress(false);
+        return;
+      }
+
+      // Reverse geocode to get pickup address
+      const pickupResult = await reverseGeocode(latitude, longitude);
+      
+      if (!pickupResult) {
+        alert('Unable to get your current address. Please try again.');
+        setIsLoadingRecentAddress(false);
+        return;
+      }
+
+      // Navigate to SelectRide with current location as pickup and recent address as destination
+      navigate('/select-ride', {
+        state: {
+          serviceType: 'ride',
+          pickup: pickupResult.address,
+          destination: recentAddress.address,
+          stops: [],
+          pickupCoords: {
+            lat: latitude,
+            lng: longitude
+          },
+          destinationCoords: recentAddress.coords,
+          stopCoords: [],
+          fromDashboard: true
+        }
+      });
+    } catch (error) {
+      console.error('Error handling recent address click:', error);
+      alert('Something went wrong. Please try again.');
+    } finally {
+      setIsLoadingRecentAddress(false);
+    }
+  }, [latitude, longitude, isRideActive, rideStatus, navigate]);
 
   const handleAletwendeClick = () => {
     navigate('/aletwende-send');
@@ -163,14 +207,28 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSearchSelect }) => {
 
           {/* Recent searches - real addresses from Geoapify history */}
           <div className="mt-4">
+            {/* Loading overlay for recent address navigation */}
+            {isLoadingRecentAddress && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center"
+              >
+                <div className="bg-white rounded-2xl p-6 flex flex-col items-center gap-3">
+                  <Loader2 className="w-8 h-8 text-[#5B2EFF] animate-spin" />
+                  <p className="text-gray-700 font-medium">Getting your location...</p>
+                </div>
+              </motion.div>
+            )}
             <ScrollableSection maxHeight="max-h-40">
               <div className="space-y-2">
                 {recentAddresses.length > 0 ? (
                   recentAddresses.map((search, index) => (
                     <motion.button
                       key={search.id}
-                      onClick={() => handleRecentAddressClick(search.address)}
-                      className="w-full flex items-center space-x-3 p-3 hover:bg-gray-50 rounded-lg transition-colors text-left"
+                      onClick={() => handleRecentAddressClick(search)}
+                      disabled={isLoadingRecentAddress}
+                      className="w-full flex items-center space-x-3 p-3 hover:bg-gray-50 rounded-lg transition-colors text-left disabled:opacity-50"
                       initial={{ opacity: 0, x: -20 }}
                       animate={{ opacity: 1, x: 0 }}
                       transition={{ delay: 0.8 + index * 0.1 }}

@@ -1,5 +1,13 @@
 
 import { useState, useEffect } from 'react';
+import { reverseGeocode as geoapifyReverseGeocode } from '../services/geoapifyService';
+
+// Default location: Lusaka, Zambia (fallback when geolocation fails)
+const DEFAULT_LOCATION = {
+  lat: -15.3875,
+  lng: 28.3228,
+  address: 'Lusaka, Zambia'
+};
 
 interface GeolocationState {
   latitude: number | null;
@@ -18,63 +26,80 @@ export const useGeolocation = () => {
     error: null
   });
 
-  const reverseGeocode = async (lat: number, lng: number): Promise<string> => {
-    // Mock reverse geocoding - in production, use Google Maps Geocoding API
-    const mockAddresses = [
-      '49 Cornwell Street, West Turffontein, Johannesburg',
-      '34 Beaumont Street, Marshalltown, Johannesburg',
-      '78 Eastwood Street, West Turffontein, Johannesburg',
-      '92 Beaumont Street, West Turffontein, Johannesburg'
-    ];
-    
-    return mockAddresses[Math.floor(Math.random() * mockAddresses.length)];
-  };
-
   useEffect(() => {
+    const reverseGeocodeLocation = async (lat: number, lng: number): Promise<string> => {
+      try {
+        const result = await geoapifyReverseGeocode(lat, lng);
+        return result?.address || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+      } catch (error) {
+        console.error('Reverse geocode error:', error);
+        return `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+      }
+    };
+
+    const handleSuccess = async (position: GeolocationPosition) => {
+      const { latitude, longitude } = position.coords;
+      try {
+        const address = await reverseGeocodeLocation(latitude, longitude);
+        setLocation({
+          latitude,
+          longitude,
+          address,
+          loading: false,
+          error: null
+        });
+      } catch (error) {
+        setLocation({
+          latitude,
+          longitude,
+          address: `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`,
+          loading: false,
+          error: null
+        });
+      }
+    };
+
+    const handleError = async (error: GeolocationPositionError) => {
+      console.warn('Geolocation error, using default location:', error.message);
+      
+      // Use default Lusaka location when geolocation fails
+      try {
+        const address = await reverseGeocodeLocation(DEFAULT_LOCATION.lat, DEFAULT_LOCATION.lng);
+        setLocation({
+          latitude: DEFAULT_LOCATION.lat,
+          longitude: DEFAULT_LOCATION.lng,
+          address,
+          loading: false,
+          error: null
+        });
+      } catch {
+        setLocation({
+          latitude: DEFAULT_LOCATION.lat,
+          longitude: DEFAULT_LOCATION.lng,
+          address: DEFAULT_LOCATION.address,
+          loading: false,
+          error: null
+        });
+      }
+    };
+
     if (!navigator.geolocation) {
-      setLocation(prev => ({
-        ...prev,
+      // Fallback to default location
+      setLocation({
+        latitude: DEFAULT_LOCATION.lat,
+        longitude: DEFAULT_LOCATION.lng,
+        address: DEFAULT_LOCATION.address,
         loading: false,
-        error: 'Geolocation is not supported by this browser'
-      }));
+        error: null
+      });
       return;
     }
 
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude } = position.coords;
-        try {
-          const address = await reverseGeocode(latitude, longitude);
-          setLocation({
-            latitude,
-            longitude,
-            address,
-            loading: false,
-            error: null
-          });
-        } catch (error) {
-          setLocation(prev => ({
-            ...prev,
-            latitude,
-            longitude,
-            loading: false,
-            error: 'Failed to get address'
-          }));
-        }
-      },
-      (error) => {
-        setLocation(prev => ({
-          ...prev,
-          loading: false,
-          error: error.message
-        }));
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 300000
-      }
-    );
+    navigator.geolocation.getCurrentPosition(handleSuccess, handleError, {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 300000
+    });
   }, []);
 
   return location;
